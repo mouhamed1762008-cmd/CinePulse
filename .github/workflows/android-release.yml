@@ -22,13 +22,22 @@ jobs:
         with:
           distribution: temurin
           java-version: '17'
+          cache: gradle
 
-      - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
-
-      - name: Install Android SDK components
+      # GitHub-hosted Android runners already include the Android SDK.
+      # Avoid running setup-android/sdkmanager here because its SDK
+      # installation step can fail when the runner's preinstalled packages
+      # are newer/different from the requested package versions.
+      - name: Verify Android SDK
+        shell: bash
         run: |
-          sdkmanager "platform-tools" "platforms;android-36" "build-tools;36.0.0"
+          set -euo pipefail
+          echo "ANDROID_HOME=$ANDROID_HOME"
+          sdkmanager --version
+          yes | sdkmanager --licenses >/dev/null 2>&1 || true
+          sdkmanager --list_installed | head -80
+          test -d "$ANDROID_HOME/platforms/android-36"
+          test -d "$ANDROID_HOME/build-tools/36.0.0"
 
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v6
@@ -40,11 +49,20 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p "$RUNNER_TEMP/signing"
-          export CI_KEYSTORE="$RUNNER_TEMP/signing/cinepulse-release.jks"
-          export CI_STORE_PASSWORD="$(openssl rand -hex 24)"
-          export CI_KEY_PASSWORD="$CI_STORE_PASSWORD"
 
-          keytool -genkeypair             -v             -keystore "$CI_KEYSTORE"             -storepass "$CI_STORE_PASSWORD"             -keypass "$CI_KEY_PASSWORD"             -alias upload             -keyalg RSA             -keysize 2048             -validity 10000             -dname "CN=CinePulse CI, OU=Build, O=CinePulse, L=CI, ST=CI, C=US"
+          CI_KEYSTORE="$RUNNER_TEMP/signing/cinepulse-release.jks"
+          CI_STORE_PASSWORD="$(openssl rand -hex 24)"
+          CI_KEY_PASSWORD="$CI_STORE_PASSWORD"
+
+          keytool -genkeypair -v \
+            -keystore "$CI_KEYSTORE" \
+            -storepass "$CI_STORE_PASSWORD" \
+            -keypass "$CI_KEY_PASSWORD" \
+            -alias upload \
+            -keyalg RSA \
+            -keysize 2048 \
+            -validity 10000 \
+            -dname "CN=CinePulse CI, OU=Build, O=CinePulse, L=CI, ST=CI, C=US"
 
           echo "KEYSTORE_PATH=$CI_KEYSTORE" >> "$GITHUB_ENV"
           echo "STORE_PASSWORD=$CI_STORE_PASSWORD" >> "$GITHUB_ENV"
