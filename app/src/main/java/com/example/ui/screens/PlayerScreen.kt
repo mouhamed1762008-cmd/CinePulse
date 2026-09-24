@@ -1,5 +1,12 @@
 package com.example.ui.screens
 
+import android.annotation.SuppressLint
+import android.view.ViewGroup
+import android.webkit.WebChromeClient
+import android.webkit.WebResourceRequest
+import android.webkit.WebSettings
+import android.webkit.WebView
+import android.webkit.WebViewClient
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -25,17 +32,19 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.VolumeUp
 import androidx.compose.material.icons.filled.ClosedCaption
 import androidx.compose.material.icons.filled.FastForward
-import androidx.compose.material.icons.filled.FastRewind
 import androidx.compose.material.icons.filled.Fullscreen
 import androidx.compose.material.icons.filled.HighQuality
+import androidx.compose.material.icons.filled.Movie
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Replay10
 import androidx.compose.material.icons.filled.SkipNext
 import androidx.compose.material.icons.filled.Speed
-import androidx.compose.material.icons.filled.VolumeUp
+import androidx.compose.material.icons.filled.Tv
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -50,6 +59,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
@@ -68,6 +78,7 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.viewinterop.AndroidView
 import com.example.data.model.MediaType
 import com.example.ui.components.PosterGradients
 import com.example.ui.theme.AccentCyan
@@ -84,6 +95,11 @@ import com.example.ui.theme.TextSecondary
 import com.example.ui.viewmodel.CinePulseViewModel
 import kotlinx.coroutines.delay
 
+enum class PlayerSource(val label: String) {
+    PLAYMOGO_STREAM("PlayMogo Stream"),
+    CINEMATIC_SIMULATION("Cinematic Demo")
+}
+
 @Composable
 fun PlayerScreen(
     mediaId: String,
@@ -95,10 +111,14 @@ fun PlayerScreen(
 ) {
     val media = viewModel.getMediaById(mediaId) ?: viewModel.getFeaturedHero()
 
+    var activeSource by remember { mutableStateOf(PlayerSource.PLAYMOGO_STREAM) }
+    var reloadCount by remember { mutableIntStateOf(0) }
+
+    // Simulation playback states
     var isPlaying by remember { mutableStateOf(true) }
     var currentSeconds by remember { mutableIntStateOf(1450) } // ~24m 10s
     val totalSeconds = 7420 // ~2h 03m 40s
-    var showControls by remember { mutableStateOf(true) }
+    var showSimulationControls by remember { mutableStateOf(true) }
 
     // Dialog state controllers
     var showSubtitlesModal by remember { mutableStateOf(false) }
@@ -113,9 +133,9 @@ fun PlayerScreen(
     var showSpeedModal by remember { mutableStateOf(false) }
     var selectedSpeed by remember { mutableFloatStateOf(1.0f) }
 
-    // Real-time playback ticking timer
-    LaunchedEffect(isPlaying) {
-        while (isPlaying) {
+    // Real-time playback ticking timer for simulation
+    LaunchedEffect(isPlaying, activeSource) {
+        while (isPlaying && activeSource == PlayerSource.CINEMATIC_SIMULATION) {
             delay(1000)
             if (currentSeconds < totalSeconds) {
                 currentSeconds += 1
@@ -125,11 +145,11 @@ fun PlayerScreen(
         }
     }
 
-    // Auto-hide controls after 4 seconds of inactivity
-    LaunchedEffect(showControls, isPlaying) {
-        if (showControls && isPlaying) {
+    // Auto-hide controls in simulation mode after 4.5 seconds
+    LaunchedEffect(showSimulationControls, isPlaying, activeSource) {
+        if (showSimulationControls && isPlaying && activeSource == PlayerSource.CINEMATIC_SIMULATION) {
             delay(4500)
-            showControls = false
+            showSimulationControls = false
         }
     }
 
@@ -148,149 +168,255 @@ fun PlayerScreen(
         modifier = modifier
             .fillMaxSize()
             .background(Color.Black)
-            .clickable(
-                interactionSource = remember { MutableInteractionSource() },
-                indication = null,
-                onClick = { showControls = !showControls }
-            )
             .testTag("video_player_container")
     ) {
-        // Video Stage / Visual Content
-        if (media.backdropDrawableRes != null) {
-            Image(
-                painter = painterResource(id = media.backdropDrawableRes),
-                contentDescription = "Video Stream",
-                contentScale = ContentScale.Crop,
+        // --- 1. VIDEO LAYER: PlayMogo Iframe or Cinematic Backdrop ---
+        if (activeSource == PlayerSource.PLAYMOGO_STREAM) {
+            PlayMogoIframePlayer(
+                reloadKey = reloadCount,
                 modifier = Modifier.fillMaxSize()
             )
         } else {
+            // Cinematic Simulation Background
             Box(
                 modifier = Modifier
                     .fillMaxSize()
-                    .background(Brush.linearGradient(posterGradientColors))
-            )
-        }
-
-        // Subtitle Overlay (if enabled)
-        if (selectedSubtitle != "Off" && isPlaying) {
-            Box(
-                modifier = Modifier
-                    .align(Alignment.BottomCenter)
-                    .padding(bottom = if (showControls) 120.dp else 40.dp)
-                    .clip(RoundedCornerShape(6.dp))
-                    .background(Color.Black.copy(alpha = 0.75f))
-                    .padding(horizontal = 14.dp, vertical = 6.dp)
+                    .clickable(
+                        interactionSource = remember { MutableInteractionSource() },
+                        indication = null,
+                        onClick = { showSimulationControls = !showSimulationControls }
+                    )
             ) {
-                Text(
-                    text = "Temporal anomaly detected at coordinates Sector-7.",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = Color.Yellow,
-                    fontWeight = FontWeight.SemiBold
-                )
-            }
-        }
+                if (media.backdropDrawableRes != null) {
+                    Image(
+                        painter = painterResource(id = media.backdropDrawableRes),
+                        contentDescription = "Video Stream",
+                        contentScale = ContentScale.Crop,
+                        modifier = Modifier.fillMaxSize()
+                    )
+                } else {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .background(Brush.linearGradient(posterGradientColors))
+                    )
+                }
 
-        // Next Episode overlay for series nearing end
-        if (media.type == MediaType.SERIES && currentSeconds > (totalSeconds - 120)) {
-            Surface(
-                color = GlassDark,
-                shape = RoundedCornerShape(14.dp),
-                border = androidx.compose.foundation.BorderStroke(1.dp, AccentPurpleGlow),
-                modifier = Modifier
-                    .align(Alignment.BottomEnd)
-                    .padding(end = 16.dp, bottom = if (showControls) 120.dp else 50.dp)
-                    .clickable {
-                        currentSeconds = 0
+                // Subtitle Overlay (if enabled)
+                if (selectedSubtitle != "Off" && isPlaying) {
+                    Box(
+                        modifier = Modifier
+                            .align(Alignment.BottomCenter)
+                            .padding(bottom = if (showSimulationControls) 120.dp else 40.dp)
+                            .clip(RoundedCornerShape(6.dp))
+                            .background(Color.Black.copy(alpha = 0.75f))
+                            .padding(horizontal = 14.dp, vertical = 6.dp)
+                    ) {
+                        Text(
+                            text = "Temporal anomaly detected at coordinates Sector-7.",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = Color.Yellow,
+                            fontWeight = FontWeight.SemiBold
+                        )
                     }
-            ) {
-                Row(
-                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text(
-                        text = "Next Episode in 15s",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = TextPrimary
-                    )
-                    Spacer(modifier = Modifier.width(6.dp))
-                    Icon(
-                        imageVector = Icons.Default.SkipNext,
-                        contentDescription = "Next Episode",
-                        tint = AccentCyan,
-                        modifier = Modifier.size(18.dp)
-                    )
+                }
+
+                // Next Episode overlay for series nearing end
+                if (media.type == MediaType.SERIES && currentSeconds > (totalSeconds - 120)) {
+                    Surface(
+                        color = GlassDark,
+                        shape = RoundedCornerShape(14.dp),
+                        border = androidx.compose.foundation.BorderStroke(1.dp, AccentPurpleGlow),
+                        modifier = Modifier
+                            .align(Alignment.BottomEnd)
+                            .padding(end = 16.dp, bottom = if (showSimulationControls) 120.dp else 50.dp)
+                            .clickable { currentSeconds = 0 }
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = "Next Episode in 15s",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = TextPrimary
+                            )
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Icon(
+                                imageVector = Icons.Default.SkipNext,
+                                contentDescription = "Next Episode",
+                                tint = AccentCyan,
+                                modifier = Modifier.size(18.dp)
+                            )
+                        }
+                    }
                 }
             }
         }
 
-        // Animated Player Controls Layer
-        AnimatedVisibility(
-            visible = showControls,
-            enter = fadeIn(),
-            exit = fadeOut(),
-            modifier = Modifier.fillMaxSize()
+        // --- 2. FLOATING TOP HEADER & SOURCE SELECTOR ---
+        // Visible in both modes for seamless navigation and mode switching
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .align(Alignment.TopCenter)
+                .background(
+                    Brush.verticalGradient(
+                        colors = listOf(
+                            Color.Black.copy(alpha = 0.85f),
+                            Color.Black.copy(alpha = 0.40f),
+                            Color.Transparent
+                        )
+                    )
+                )
+                .statusBarsPadding()
+                .padding(horizontal = 14.dp, vertical = 10.dp)
         ) {
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .background(Color.Black.copy(alpha = 0.65f))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
             ) {
-                // Top Controls Bar (Back, Title, Audio/Subtitles, Settings)
+                // Back Button & Title Info
                 Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .statusBarsPadding()
-                        .padding(horizontal = 16.dp, vertical = 12.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.weight(1f)
                 ) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        modifier = Modifier.weight(1f)
+                    IconButton(
+                        onClick = onBack,
+                        modifier = Modifier
+                            .size(42.dp)
+                            .clip(CircleShape)
+                            .background(SurfaceDarkElevated.copy(alpha = 0.85f))
+                            .border(1.dp, SurfaceBorder, CircleShape)
+                            .testTag("player_back_button")
                     ) {
-                        IconButton(
-                            onClick = onBack,
-                            modifier = Modifier
-                                .size(40.dp)
-                                .clip(CircleShape)
-                                .background(SurfaceDarkElevated.copy(alpha = 0.8f))
-                                .testTag("player_back_button")
-                        ) {
-                            Icon(
-                                imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                                contentDescription = "Back",
-                                tint = TextPrimary
+                        Icon(
+                            imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                            contentDescription = "Back",
+                            tint = TextPrimary
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.width(12.dp))
+
+                    Column {
+                        val epText = if (episodeNumber != null) "S${seasonNumber ?: 1} : E$episodeNumber" else null
+                        Text(
+                            text = media.title,
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Bold,
+                            color = TextPrimary,
+                            maxLines = 1
+                        )
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            // Pulsing / live status dot
+                            Box(
+                                modifier = Modifier
+                                    .size(7.dp)
+                                    .clip(CircleShape)
+                                    .background(if (activeSource == PlayerSource.PLAYMOGO_STREAM) AccentCyan else AccentPurpleGlow)
+                            )
+                            Spacer(modifier = Modifier.width(5.dp))
+                            Text(
+                                text = if (activeSource == PlayerSource.PLAYMOGO_STREAM) "PlayMogo Embed" else (epText ?: "${media.year} • ${media.videoQuality}"),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = if (activeSource == PlayerSource.PLAYMOGO_STREAM) AccentCyan else AccentPurpleGlow
                             )
                         }
+                    }
+                }
 
-                        Spacer(modifier = Modifier.width(12.dp))
-
-                        Column {
-                            val epText = if (episodeNumber != null) "S${seasonNumber ?: 1} : E$episodeNumber" else null
-                            Text(
-                                text = media.title,
-                                style = MaterialTheme.typography.titleMedium,
-                                fontWeight = FontWeight.Bold,
-                                color = TextPrimary
+                // Controls & Source Switcher Pills
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    if (activeSource == PlayerSource.PLAYMOGO_STREAM) {
+                        // Reload button for iframe stream
+                        IconButton(
+                            onClick = { reloadCount++ },
+                            modifier = Modifier
+                                .size(36.dp)
+                                .clip(CircleShape)
+                                .background(SurfaceDarkElevated.copy(alpha = 0.8f))
+                                .border(1.dp, SurfaceBorder, CircleShape)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Refresh,
+                                contentDescription = "Reload Stream",
+                                tint = TextPrimary,
+                                modifier = Modifier.size(18.dp)
                             )
-                            if (epText != null) {
-                                Text(
-                                    text = epText,
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = AccentPurpleGlow
-                                )
-                            }
                         }
                     }
 
-                    // Top quick actions: Subtitles, Audio, Quality, Speed
-                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    // Source Switcher Button
+                    Surface(
+                        color = SurfaceDarkElevated.copy(alpha = 0.85f),
+                        shape = RoundedCornerShape(20.dp),
+                        border = androidx.compose.foundation.BorderStroke(
+                            1.dp,
+                            if (activeSource == PlayerSource.PLAYMOGO_STREAM) AccentPurple else SurfaceBorder
+                        ),
+                        modifier = Modifier.clickable {
+                            activeSource = if (activeSource == PlayerSource.PLAYMOGO_STREAM) {
+                                PlayerSource.CINEMATIC_SIMULATION
+                            } else {
+                                PlayerSource.PLAYMOGO_STREAM
+                            }
+                        }
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(
+                                imageVector = if (activeSource == PlayerSource.PLAYMOGO_STREAM) Icons.Default.Tv else Icons.Default.Movie,
+                                contentDescription = null,
+                                tint = if (activeSource == PlayerSource.PLAYMOGO_STREAM) AccentCyan else AccentPurpleGlow,
+                                modifier = Modifier.size(16.dp)
+                            )
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text(
+                                text = if (activeSource == PlayerSource.PLAYMOGO_STREAM) "PlayMogo" else "Simulation",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = TextPrimary,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                        }
+                    }
+                }
+            }
+        }
+
+        // --- 3. CINEMATIC SIMULATION CONTROLS LAYER ---
+        if (activeSource == PlayerSource.CINEMATIC_SIMULATION) {
+            AnimatedVisibility(
+                visible = showSimulationControls,
+                enter = fadeIn(),
+                exit = fadeOut(),
+                modifier = Modifier.fillMaxSize()
+            ) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(Color.Black.copy(alpha = 0.55f))
+                ) {
+                    // Quick Action Modals Row (Top Right under header)
+                    Row(
+                        modifier = Modifier
+                            .align(Alignment.TopEnd)
+                            .statusBarsPadding()
+                            .padding(top = 64.dp, end = 16.dp),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
                         IconButton(
                             onClick = { showSubtitlesModal = true },
                             modifier = Modifier
                                 .size(38.dp)
                                 .clip(CircleShape)
-                                .background(SurfaceDarkElevated.copy(alpha = 0.7f))
+                                .background(SurfaceDarkElevated.copy(alpha = 0.8f))
                         ) {
                             Icon(
                                 imageVector = Icons.Default.ClosedCaption,
@@ -305,7 +431,7 @@ fun PlayerScreen(
                             modifier = Modifier
                                 .size(38.dp)
                                 .clip(CircleShape)
-                                .background(SurfaceDarkElevated.copy(alpha = 0.7f))
+                                .background(SurfaceDarkElevated.copy(alpha = 0.8f))
                         ) {
                             Icon(
                                 imageVector = Icons.Default.HighQuality,
@@ -320,7 +446,7 @@ fun PlayerScreen(
                             modifier = Modifier
                                 .size(38.dp)
                                 .clip(CircleShape)
-                                .background(SurfaceDarkElevated.copy(alpha = 0.7f))
+                                .background(SurfaceDarkElevated.copy(alpha = 0.8f))
                         ) {
                             Icon(
                                 imageVector = Icons.Default.Speed,
@@ -330,141 +456,140 @@ fun PlayerScreen(
                             )
                         }
                     }
-                }
 
-                // Center Play / Pause / 10s Rewind & Forward Controls
-                Row(
-                    modifier = Modifier.align(Alignment.Center),
-                    horizontalArrangement = Arrangement.spacedBy(28.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    // Rewind 10s
-                    IconButton(
-                        onClick = { currentSeconds = (currentSeconds - 10).coerceAtLeast(0) },
-                        modifier = Modifier
-                            .size(52.dp)
-                            .clip(CircleShape)
-                            .background(SurfaceDarkElevated.copy(alpha = 0.75f))
-                            .testTag("player_rewind_button")
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Replay10,
-                            contentDescription = "Rewind 10s",
-                            tint = TextPrimary,
-                            modifier = Modifier.size(28.dp)
-                        )
-                    }
-
-                    // Large Center Play / Pause
-                    Box(
-                        modifier = Modifier
-                            .size(72.dp)
-                            .clip(CircleShape)
-                            .background(AccentPurple)
-                            .clickable { isPlaying = !isPlaying }
-                            .testTag("player_play_pause_button"),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Icon(
-                            imageVector = if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
-                            contentDescription = if (isPlaying) "Pause" else "Play",
-                            tint = TextPrimary,
-                            modifier = Modifier.size(40.dp)
-                        )
-                    }
-
-                    // Forward 10s
-                    IconButton(
-                        onClick = { currentSeconds = (currentSeconds + 10).coerceAtMost(totalSeconds) },
-                        modifier = Modifier
-                            .size(52.dp)
-                            .clip(CircleShape)
-                            .background(SurfaceDarkElevated.copy(alpha = 0.75f))
-                            .testTag("player_forward_button")
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.FastForward,
-                            contentDescription = "Forward 10s",
-                            tint = TextPrimary,
-                            modifier = Modifier.size(28.dp)
-                        )
-                    }
-                }
-
-                // Bottom Progress Bar & Time Scrubber
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .align(Alignment.BottomCenter)
-                        .navigationBarsPadding()
-                        .padding(horizontal = 16.dp, vertical = 12.dp)
-                ) {
-                    // Slider scrubber
-                    Slider(
-                        value = currentSeconds.toFloat(),
-                        onValueChange = { currentSeconds = it.toInt() },
-                        valueRange = 0f..totalSeconds.toFloat(),
-                        colors = SliderDefaults.colors(
-                            thumbColor = AccentPurpleGlow,
-                            activeTrackColor = AccentPurple,
-                            inactiveTrackColor = SurfaceDarkHigh
-                        ),
-                        modifier = Modifier.testTag("player_progress_slider")
-                    )
-
-                    // Time labels & Bottom controls
+                    // Center Play / Pause / 10s Rewind & Forward Controls
                     Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
+                        modifier = Modifier.align(Alignment.Center),
+                        horizontalArrangement = Arrangement.spacedBy(28.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Text(
-                                text = formatTime(currentSeconds),
-                                style = MaterialTheme.typography.labelSmall,
-                                fontWeight = FontWeight.Bold,
-                                color = TextPrimary
-                            )
-                            Text(
-                                text = " / ${formatTime(totalSeconds)}",
-                                style = MaterialTheme.typography.labelSmall,
-                                color = TextSecondary
+                        // Rewind 10s
+                        IconButton(
+                            onClick = { currentSeconds = (currentSeconds - 10).coerceAtLeast(0) },
+                            modifier = Modifier
+                                .size(52.dp)
+                                .clip(CircleShape)
+                                .background(SurfaceDarkElevated.copy(alpha = 0.75f))
+                                .testTag("player_rewind_button")
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Replay10,
+                                contentDescription = "Rewind 10s",
+                                tint = TextPrimary,
+                                modifier = Modifier.size(28.dp)
                             )
                         }
 
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        // Large Center Play / Pause
+                        Box(
+                            modifier = Modifier
+                                .size(72.dp)
+                                .clip(CircleShape)
+                                .background(AccentPurple)
+                                .clickable { isPlaying = !isPlaying }
+                                .testTag("player_play_pause_button"),
+                            contentAlignment = Alignment.Center
                         ) {
-                            Text(
-                                text = "${selectedSpeed}x",
-                                style = MaterialTheme.typography.labelSmall,
-                                color = AccentCyan,
-                                fontWeight = FontWeight.Bold
+                            Icon(
+                                imageVector = if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
+                                contentDescription = if (isPlaying) "Pause" else "Play",
+                                tint = TextPrimary,
+                                modifier = Modifier.size(40.dp)
                             )
+                        }
 
-                            IconButton(
-                                onClick = { showAudioModal = true },
-                                modifier = Modifier.size(36.dp)
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.VolumeUp,
-                                    contentDescription = "Audio Language",
-                                    tint = TextPrimary,
-                                    modifier = Modifier.size(20.dp)
+                        // Forward 10s
+                        IconButton(
+                            onClick = { currentSeconds = (currentSeconds + 10).coerceAtMost(totalSeconds) },
+                            modifier = Modifier
+                                .size(52.dp)
+                                .clip(CircleShape)
+                                .background(SurfaceDarkElevated.copy(alpha = 0.75f))
+                                .testTag("player_forward_button")
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.FastForward,
+                                contentDescription = "Forward 10s",
+                                tint = TextPrimary,
+                                modifier = Modifier.size(28.dp)
+                            )
+                        }
+                    }
+
+                    // Bottom Progress Bar & Time Scrubber
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .align(Alignment.BottomCenter)
+                            .navigationBarsPadding()
+                            .padding(horizontal = 16.dp, vertical = 12.dp)
+                    ) {
+                        Slider(
+                            value = currentSeconds.toFloat(),
+                            onValueChange = { currentSeconds = it.toInt() },
+                            valueRange = 0f..totalSeconds.toFloat(),
+                            colors = SliderDefaults.colors(
+                                thumbColor = AccentPurpleGlow,
+                                activeTrackColor = AccentPurple,
+                                inactiveTrackColor = SurfaceDarkHigh
+                            ),
+                            modifier = Modifier.testTag("player_progress_slider")
+                        )
+
+                        // Time labels & Bottom controls
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text(
+                                    text = formatTime(currentSeconds),
+                                    style = MaterialTheme.typography.labelSmall,
+                                    fontWeight = FontWeight.Bold,
+                                    color = TextPrimary
+                                )
+                                Text(
+                                    text = " / ${formatTime(totalSeconds)}",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = TextSecondary
                                 )
                             }
 
-                            IconButton(
-                                onClick = { /* Toggle fullscreen */ },
-                                modifier = Modifier.size(36.dp)
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
                             ) {
-                                Icon(
-                                    imageVector = Icons.Default.Fullscreen,
-                                    contentDescription = "Fullscreen",
-                                    tint = TextPrimary,
-                                    modifier = Modifier.size(22.dp)
+                                Text(
+                                    text = "${selectedSpeed}x",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = AccentCyan,
+                                    fontWeight = FontWeight.Bold
                                 )
+
+                                IconButton(
+                                    onClick = { showAudioModal = true },
+                                    modifier = Modifier.size(36.dp)
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.AutoMirrored.Filled.VolumeUp,
+                                        contentDescription = "Audio Language",
+                                        tint = TextPrimary,
+                                        modifier = Modifier.size(20.dp)
+                                    )
+                                }
+
+                                IconButton(
+                                    onClick = { /* Fullscreen toggle */ },
+                                    modifier = Modifier.size(36.dp)
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.Fullscreen,
+                                        contentDescription = "Fullscreen",
+                                        tint = TextPrimary,
+                                        modifier = Modifier.size(22.dp)
+                                    )
+                                }
                             }
                         }
                     }
@@ -646,4 +771,116 @@ fun PlayerScreen(
             containerColor = SurfaceDarkElevated
         )
     }
+}
+
+/**
+ * Hosts the requested PlayMogo streaming video iframe:
+ * <iframe width="600" height="480" src="https://playmogo.com/e/qft9bxdn4k7g" scrolling="no" frameborder="0" allowfullscreen="true"></iframe>
+ *
+ * Configured with hardware acceleration, responsive HTML wrapper, WebChromeClient, and lifecycle cleanup.
+ */
+@SuppressLint("SetJavaScriptEnabled")
+@Composable
+fun PlayMogoIframePlayer(
+    reloadKey: Int,
+    modifier: Modifier = Modifier
+) {
+    val iframeHtml = remember {
+        """
+        <!DOCTYPE html>
+        <html>
+        <head>
+          <meta charset="utf-8">
+          <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+          <style>
+            * { box-sizing: border-box; margin: 0; padding: 0; }
+            html, body {
+              width: 100%;
+              height: 100%;
+              background-color: #000000;
+              overflow: hidden;
+              display: flex;
+              align-items: center;
+              justify-content: center;
+            }
+            .player-container {
+              position: relative;
+              width: 100%;
+              height: 100%;
+              display: flex;
+              align-items: center;
+              justify-content: center;
+            }
+            iframe {
+              width: 100%;
+              height: 100%;
+              border: 0;
+            }
+          </style>
+        </head>
+        <body>
+          <div class="player-container">
+            <iframe width="600" height="480" src="https://playmogo.com/e/qft9bxdn4k7g" scrolling="no" frameborder="0" allowfullscreen="true" allow="autoplay; fullscreen; encrypted-media; picture-in-picture"></iframe>
+          </div>
+        </body>
+        </html>
+        """.trimIndent()
+    }
+
+    var webViewRef by remember { mutableStateOf<WebView?>(null) }
+
+    // Reload trigger if user taps refresh
+    LaunchedEffect(reloadKey) {
+        if (reloadKey > 0) {
+            webViewRef?.loadDataWithBaseURL("https://playmogo.com", iframeHtml, "text/html", "UTF-8", null)
+        }
+    }
+
+    // Clean up webview and stop audio on back navigation
+    DisposableEffect(Unit) {
+        onDispose {
+            webViewRef?.apply {
+                stopLoading()
+                loadUrl("about:blank")
+                pauseTimers()
+                destroy()
+            }
+        }
+    }
+
+    AndroidView(
+        factory = { context ->
+            WebView(context).apply {
+                layoutParams = ViewGroup.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.MATCH_PARENT
+                )
+                setBackgroundColor(android.graphics.Color.BLACK)
+                settings.apply {
+                    javaScriptEnabled = true
+                    domStorageEnabled = true
+                    mediaPlaybackRequiresUserGesture = false
+                    loadWithOverviewMode = true
+                    useWideViewPort = true
+                    allowContentAccess = true
+                    allowFileAccess = true
+                    databaseEnabled = true
+                    setSupportZoom(false)
+                    cacheMode = WebSettings.LOAD_DEFAULT
+                }
+                webChromeClient = WebChromeClient()
+                webViewClient = object : WebViewClient() {
+                    override fun shouldOverrideUrlLoading(view: WebView?, request: WebResourceRequest?): Boolean {
+                        return false
+                    }
+                }
+                loadDataWithBaseURL("https://playmogo.com", iframeHtml, "text/html", "UTF-8", null)
+                webViewRef = this
+            }
+        },
+        update = {
+            // Updated via LaunchedEffect(reloadKey)
+        },
+        modifier = modifier
+    )
 }
