@@ -1,0 +1,6 @@
+{
+  "name": "CinePulse",
+  "description": "Premium VOD streaming platform for movies, series, and live TV.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
